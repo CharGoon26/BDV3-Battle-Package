@@ -518,6 +518,9 @@ class Battle(commands.GroupCog, group_name="battle"):
             embed.set_footer(text=f"Win {wins_to_next} more battle(s) to earn your next reward!")
 
         await interaction.followup.send(embed=embed)
+
+    @app_commands.command()
+    async def redeem(self, interaction: discord.Interaction):
         """
         Redeem your battle win rewards
         """
