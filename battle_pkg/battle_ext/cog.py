@@ -426,7 +426,97 @@ class Battle(commands.GroupCog, group_name="battle"):
         log.info(f"Battle in guild {interaction.guild_id} cancelled by {interaction.user.id}")
 
     @app_commands.command()
-    async def redeem(self, interaction: discord.Interaction):
+    async def stats(self, interaction: discord.Interaction, user: Optional[discord.Member] = None):
+        """
+        View battle statistics for yourself or another player.
+
+        Parameters
+        ----------
+        user: discord.Member
+            The player to check stats for (leave empty for yourself)
+        """
+        target = user or interaction.user
+        player, _ = await Player.objects.aget_or_create(discord_id=target.id)
+        data = player.extra_data
+
+        wins = data.get("battle_wins", 0)
+        losses = data.get("battle_losses", 0)
+        total = wins + losses
+        winrate = f"{(wins / total * 100):.1f}%" if total > 0 else "N/A"
+
+        rewards_available = wins // 3
+        rewards_claimed = data.get("battle_rewards_claimed", 0)
+        unclaimed = max(0, rewards_available - rewards_claimed)
+        wins_to_next = 3 - (wins % 3) if wins % 3 != 0 else 3
+
+        burn_points = data.get("burn_points", 0)
+
+        last_result = data.get("last_battle_result")
+        if last_result:
+            outcome = "✅ Won" if last_result.get("won") else "❌ Lost"
+            last_battle_text = f"{outcome} vs **{last_result.get('opponent', 'Unknown')}**"
+        else:
+            last_battle_text = "No battles yet"
+
+        # Win streak indicator
+        if wins == 0 and losses == 0:
+            rank = "🆕 Newcomer"
+        elif winrate == "N/A" or total < 3:
+            rank = "🔰 Beginner"
+        elif wins / total >= 0.75:
+            rank = "👑 Champion"
+        elif wins / total >= 0.55:
+            rank = "🥇 Veteran"
+        elif wins / total >= 0.40:
+            rank = "🥈 Experienced"
+        else:
+            rank = "🥉 Apprentice"
+
+        embed = discord.Embed(
+            title=f"⚔️ Battle Stats — {target.display_name}",
+            color=discord.Color.blurple(),
+        )
+        embed.set_thumbnail(url=target.display_avatar.url)
+
+        embed.add_field(
+            name="📊 Record",
+            value=(
+                f"**Wins:** {wins}\n"
+                f"**Losses:** {losses}\n"
+                f"**Total Battles:** {total}\n"
+                f"**Win Rate:** {winrate}"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="🏅 Rank",
+            value=(
+                f"{rank}\n\n"
+                f"**🔥 Burn Points:** {burn_points}"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="🎁 Rewards",
+            value=(
+                f"**Rewards Claimed:** {rewards_claimed}\n"
+                f"**Unclaimed:** {unclaimed}\n"
+                f"**Wins to Next Reward:** {wins_to_next}/3"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="🕹️ Last Battle",
+            value=last_battle_text,
+            inline=False,
+        )
+
+        if unclaimed > 0:
+            embed.set_footer(text=f"🎁 You have {unclaimed} unclaimed reward(s)! Use /battle redeem")
+        else:
+            embed.set_footer(text=f"Win {wins_to_next} more battle(s) to earn your next reward!")
+
+        await interaction.response.send_message(embed=embed)
         """
         Redeem your battle win rewards
         """
