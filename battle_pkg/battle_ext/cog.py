@@ -67,12 +67,14 @@ class BattleMoveView(discord.ui.View):
 
 
 class BattleTeamBuilder(discord.ui.View):
-    def __init__(self, battle_data: dict, is_p1: bool, available_balls: list, user: discord.User):
+    # FIX: Accept the cog instance so done_callback can call _update_battle_setup_message
+    def __init__(self, battle_data: dict, is_p1: bool, available_balls: list, user: discord.User, cog: "Battle"):
         super().__init__(timeout=300)
         self.battle_data = battle_data
         self.is_p1 = is_p1
         self.available_balls = available_balls
         self.user = user
+        self.cog = cog
         self.battle = battle_data["battle"]
         self.current_team = self.battle.p1_balls if is_p1 else self.battle.p2_balls
         self.update_components()
@@ -179,6 +181,13 @@ class BattleTeamBuilder(discord.ui.View):
         embed.title = "✅ Team Complete!"
         embed.color = discord.Color.green()
         await interaction.response.edit_message(embed=embed, view=self)
+
+        # FIX: Update the public battle setup message after team is confirmed
+        try:
+            await self.cog._update_battle_setup_message(interaction, self.battle_data)
+        except Exception as e:
+            log.error(f"Failed to update battle setup message after /battle add: {e}")
+
         self.stop()
 
 
@@ -371,67 +380,57 @@ class Battle(commands.GroupCog, group_name="battle"):
         view.add_item(accept_button)
         view.add_item(decline_button)
 
-        await interaction.response.send_message(
-            content=f"{opponent.mention}, you've been challenged!",
-            embed=embed,
-            view=view,
-        )
+        await interaction.response.send_message(f"{opponent.mention}, you've been challenged!", embed=embed, view=view)
 
     @app_commands.command()
-    async def stats(self, interaction: discord.Interaction, user: Optional[discord.Member] = None):
+    async def cancel(self, interaction: discord.Interaction):
         """
-        View battle statistics
-
-        Parameters
-        ----------
-        user: discord.Member
-            The user to check stats for (defaults to yourself)
+        Cancel the current active battle setup in this server.
+        Only the challenger or the challenged player can cancel.
         """
-        target = user or interaction.user
-        player, _ = await Player.objects.aget_or_create(discord_id=target.id)
+        check_expired_battles()
 
-        wins = player.extra_data.get("battle_wins", 0)
-        losses = player.extra_data.get("battle_losses", 0)
-        total_battles = wins + losses
-        win_rate = (wins / total_battles * 100) if total_battles > 0 else 0
-
-        rewards_claimed = player.extra_data.get("battle_rewards_claimed", 0)
-        rewards_available = wins // 3
-        wins_until_reward = 3 - (wins % 3)
-
-        embed = discord.Embed(title=f"⚔️ {target.name}'s Battle Stats", color=discord.Color.blue())
-        embed.add_field(
-            name="📊 Record",
-            value=f"**Wins:** {wins}\n**Losses:** {losses}\n**Win Rate:** {win_rate:.1f}%",
-            inline=True,
-        )
-        embed.add_field(
-            name="🎁 Rewards",
-            value=(
-                f"**Total Earned:** {rewards_claimed}\n"
-                f"**Available:** {rewards_available - rewards_claimed}\n"
-                f"**Progress:** {wins % 3}/3 wins\n"
-                f"**Next Reward:** {wins_until_reward} wins away"
-            ),
-            inline=True,
-        )
-        last_battle = player.extra_data.get("last_battle_result")
-        if last_battle:
-            result_emoji = "🏆" if last_battle.get("won") else "💔"
-            embed.add_field(
-                name="📝 Last Battle",
-                value=f"{result_emoji} vs {last_battle.get('opponent', 'Unknown')}",
-                inline=False,
+        if interaction.guild_id not in active_battles:
+            await interaction.response.send_message(
+                "❌ There's no active battle to cancel!", ephemeral=True
             )
-        await interaction.response.send_message(embed=embed)
+            return
+
+        battle_data = active_battles[interaction.guild_id]
+
+        # Only participants can cancel
+        if interaction.user.id not in (battle_data["p1_id"], battle_data["p2_id"]):
+            await interaction.response.send_message(
+                "❌ Only the players in this battle can cancel it!", ephemeral=True
+            )
+            return
+
+        # Update the public battle message to show it was cancelled
+        message = battle_data.get("message")
+        if message:
+            try:
+                cancelled_embed = discord.Embed(
+                    title="❌ Battle Cancelled",
+                    description=f"The battle was cancelled by {interaction.user.mention}.",
+                    color=discord.Color.red(),
+                )
+                await message.edit(embed=cancelled_embed, view=None)
+            except Exception as e:
+                log.error(f"Failed to edit battle message on cancel: {e}")
+
+        del active_battles[interaction.guild_id]
+
+        await interaction.response.send_message(
+            "✅ Battle cancelled successfully.", ephemeral=True
+        )
+        log.info(f"Battle in guild {interaction.guild_id} cancelled by {interaction.user.id}")
 
     @app_commands.command()
     async def redeem(self, interaction: discord.Interaction):
         """
-        Redeem a reward card (requires 3 wins, claimable every 3 wins)
+        Redeem your battle win rewards
         """
         player, _ = await Player.objects.aget_or_create(discord_id=interaction.user.id)
-
         wins = player.extra_data.get("battle_wins", 0)
         rewards_available = wins // 3
         rewards_claimed = player.extra_data.get("battle_rewards_claimed", 0)
@@ -589,7 +588,8 @@ class Battle(commands.GroupCog, group_name="battle"):
             return
 
         is_p1 = interaction.user.id == battle_data["p1_id"]
-        view = BattleTeamBuilder(battle_data, is_p1, user_balls, interaction.user)
+        # FIX: Pass self (the cog) so BattleTeamBuilder can call _update_battle_setup_message
+        view = BattleTeamBuilder(battle_data, is_p1, user_balls, interaction.user, cog=self)
         embed = view.create_embed()
 
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
