@@ -597,9 +597,39 @@ class Battle(commands.GroupCog, group_name="battle"):
     @app_commands.command()
     async def remove(self, interaction: discord.Interaction):
         """
-        Manage your battle team - same as /battle add
+        Manage your battle team - add or remove cards interactively
         """
-        await self.add.callback(self, interaction)
+        check_expired_battles()
+
+        if interaction.guild_id not in active_battles:
+            await interaction.response.send_message("❌ There's no active battle setup! Use `/battle challenge` first.", ephemeral=True)
+            return
+
+        battle_data = active_battles[interaction.guild_id]
+
+        if "expires_at" in battle_data and datetime.now() > battle_data["expires_at"]:
+            await interaction.response.send_message("❌ This battle has expired! Start a new one with `/battle challenge`.", ephemeral=True)
+            del active_battles[interaction.guild_id]
+            return
+
+        battle = battle_data["battle"]
+
+        if interaction.user.id not in (battle_data["p1_id"], battle_data["p2_id"]):
+            await interaction.response.send_message("❌ You're not part of this battle!", ephemeral=True)
+            return
+
+        player, _ = await Player.objects.aget_or_create(discord_id=interaction.user.id)
+        user_balls = [b async for b in BallInstance.objects.filter(player=player, deleted=False).select_related("ball")]
+
+        if not user_balls:
+            await interaction.response.send_message("❌ You don't have any balls to add to your team!", ephemeral=True)
+            return
+
+        is_p1 = interaction.user.id == battle_data["p1_id"]
+        view = BattleTeamBuilder(battle_data, is_p1, user_balls, interaction.user, cog=self)
+        embed = view.create_embed()
+
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     async def _update_battle_setup_message(self, interaction: discord.Interaction, battle_data: dict):
         battle = battle_data["battle"]
