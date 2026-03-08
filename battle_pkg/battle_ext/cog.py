@@ -435,6 +435,8 @@ class Battle(commands.GroupCog, group_name="battle"):
         user: discord.Member
             The player to check stats for (leave empty for yourself)
         """
+        await interaction.response.defer(ephemeral=False)
+
         target = user or interaction.user
         player, _ = await Player.objects.aget_or_create(discord_id=target.id)
         data = player.extra_data
@@ -458,10 +460,9 @@ class Battle(commands.GroupCog, group_name="battle"):
         else:
             last_battle_text = "No battles yet"
 
-        # Win streak indicator
         if wins == 0 and losses == 0:
             rank = "🆕 Newcomer"
-        elif winrate == "N/A" or total < 3:
+        elif total < 3:
             rank = "🔰 Beginner"
         elif wins / total >= 0.75:
             rank = "👑 Champion"
@@ -516,7 +517,7 @@ class Battle(commands.GroupCog, group_name="battle"):
         else:
             embed.set_footer(text=f"Win {wins_to_next} more battle(s) to earn your next reward!")
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
         """
         Redeem your battle win rewards
         """
