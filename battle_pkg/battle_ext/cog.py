@@ -599,7 +599,7 @@ class Battle(commands.GroupCog, group_name="battle"):
         """
         Manage your battle team - same as /battle add
         """
-        await self.add(interaction)
+        await self.add.callback(self, interaction)
 
     async def _update_battle_setup_message(self, interaction: discord.Interaction, battle_data: dict):
         battle = battle_data["battle"]
